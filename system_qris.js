@@ -127,6 +127,7 @@ async function checkStatus(merchant, token, transactionId = null) {
       const qrisRecord = airtableRecords.records[0].fields;
       const qrisRecordId = airtableRecords.records[0].id;
 
+      // Jika sudah expired secara waktu, update status ke 'expired'
       if (new Date(qrisRecord.expiredAt) < new Date()) {
         if (qrisRecord.status !== 'expired') {
           await airtableRequest('patch', { status: 'expired' }, qrisRecordId);
@@ -134,6 +135,7 @@ async function checkStatus(merchant, token, transactionId = null) {
         return { status: 'inactive' };
       }
 
+      // Jika status sudah bukan 'active', langsung return inactive
       if (qrisRecord.status !== 'active') {
         return { status: 'inactive' };
       }
@@ -153,13 +155,15 @@ async function checkStatus(merchant, token, transactionId = null) {
   }
 }
 
+// MODIFIKASI DI SINI: status jadi 'expired'
 async function deactivateQRIS(transactionId) {
   const filterByFormula = `transactionId='${transactionId}'`;
   const airtableRecords = await airtableRequest('get', null, `?filterByFormula=${encodeURIComponent(filterByFormula)}`);
 
   if (airtableRecords.records && airtableRecords.records.length > 0) {
     const qrisRecordId = airtableRecords.records[0].id;
-    await airtableRequest('patch', { status: 'inactive' }, qrisRecordId);
+    // Ubah status ke 'expired' agar QRIS 100% tidak bisa dipakai di sistem aplikasi kamu
+    await airtableRequest('patch', { status: 'expired' }, qrisRecordId);
   }
 }
 
@@ -167,4 +171,4 @@ module.exports = {
   createQRIS,
   checkStatus,
   deactivateQRIS
-}
+    }
