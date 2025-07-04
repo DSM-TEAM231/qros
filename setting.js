@@ -8,7 +8,7 @@ const orkut = {
   },
 
   // Konfigurasi Airtable
-  airtableApiKey: 'pat3uNJaxieK58PoM.6602cca15a2125e1148edebc2d8d683122c75d65ac06c276dcb593bd0bf0d9cb',
+  airtableApiKey: 'pataL8W8PM5LspIAp.7d42bcd20b24992dee249cad3a2633f5a09449a45a95d21693aee7aca3c17bad',
   airtableBaseId: 'app9GfTtbsctCVBsi',
   airtableTable: 'qris',
   
