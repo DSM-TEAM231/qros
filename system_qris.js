@@ -153,30 +153,17 @@ async function checkStatus(merchant, token, transactionId = null) {
   }
 }
 
-// MODIFIKASI: VOID QRIS DINAMIS DI PROVIDER
+// MODIFIKASI: expiredAt langsung di-set ke waktu lampau saat dibatalkan
 async function deactivateQRIS(transactionId) {
   const filterByFormula = `transactionId='${transactionId}'`;
   const airtableRecords = await airtableRequest('get', null, `?filterByFormula=${encodeURIComponent(filterByFormula)}`);
 
   if (airtableRecords.records && airtableRecords.records.length > 0) {
     const qrisRecordId = airtableRecords.records[0].id;
-
-    // 1. VOID QRIS di provider (contoh endpoint, sesuaikan dengan dokumentasi provider-mu)
-    try {
-      // Ganti URL dan parameter sesuai provider kamu!
-      await axios.post('https://gateway.okeconnect.com/api/qris/void', {
-        transactionId // atau parameter lain sesuai provider
-      }, {
-        headers: {
-          'Authorization': `Bearer ${airtableApiKey}` // atau token lain jika perlu
-        }
-      });
-    } catch (err) {
-      console.error('Gagal void QRIS di provider:', err.message);
-    }
-
-    // 2. Update status DB
-    await airtableRequest('patch', { status: 'expired' }, qrisRecordId);
+    await airtableRequest('patch', {
+      status: 'expired',
+      expiredAt: new Date(Date.now() - 60000).toISOString() // expired 1 menit yang lalu
+    }, qrisRecordId);
   }
 }
 
@@ -184,4 +171,4 @@ module.exports = {
   createQRIS,
   checkStatus,
   deactivateQRIS
-    }
+}
