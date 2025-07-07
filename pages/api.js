@@ -1,5 +1,6 @@
 import { createQRIS, checkStatus, deactivateQRIS } from '../system_qris'
 import orkut from '../setting'
+import { airtableRequest } from '../setting'
 
 export default async function handler(req, res) {
   if (req.method === 'POST') {
@@ -45,3 +46,46 @@ export default async function handler(req, res) {
     res.status(405).end()
   }
 }
+
+// ====================
+// ✅ POLLING AIRTABLE
+// ====================
+
+let isPolling = false;
+
+async function pollingWebLain() {
+  if (isPolling) return;
+  isPolling = true;
+
+  try {
+    const filterFormula = `status="pending"`;
+    const response = await airtableRequest('get', null, `?filterByFormula=${encodeURIComponent(filterFormula)}`);
+
+    const records = response.records || [];
+    for (const record of records) {
+      const recordId = record.id;
+      const fields = record.fields;
+
+      const { id, nominal } = fields;
+      if (!id || !nominal) continue;
+
+      const result = await createQRIS(nominal, fields.codeqr || '', fields.logo || null);
+
+      await airtableRequest('patch', {
+        idTransaksi: result.transactionId,
+        url_qris: result.qrImageUrl,
+        expired: result.expirationTime,
+        status: 'waiting'
+      }, recordId);
+
+      console.log(`[Polling] QRIS dibuat untuk ID ${id} nominal ${nominal}`);
+    }
+  } catch (err) {
+    console.error('[Polling Error]', err.message);
+  }
+
+  isPolling = false;
+}
+
+// ⏱️ Jalankan polling setiap 10 detik
+setInterval(pollingWebLain, 10000);
