@@ -1,6 +1,5 @@
 import { createQRIS, checkStatus, deactivateQRIS } from '../system_qris'
-import orkut from '../setting'
-import { airtableRequest } from '../setting'
+import orkut, { airtableRequest } from '../setting'
 
 // ====================
 // ✅ POLLING AIRTABLE
@@ -21,6 +20,7 @@ async function pollingWebLain() {
       const recordId = record.id;
       const fields = record.fields;
       const { id, nominal } = fields;
+
       if (!id || !nominal) continue;
 
       const amount = parseInt(nominal);
@@ -48,7 +48,7 @@ async function pollingWebLain() {
 // ====================
 
 export default async function handler(req, res) {
-  // ✅ Trigger polling manual dari HTML
+  // ✅ HTML trigger polling (wajib panggil ini dari HTML)
   if (req.method === 'GET' && req.query.trigger) {
     await pollingWebLain();
     return res.status(200).json({ message: 'Polling selesai' });
@@ -58,7 +58,7 @@ export default async function handler(req, res) {
     try {
       const { amount, logoUrl, total, transactionId, action } = req.body;
 
-      // ✅ CEK STATUS QRIS
+      // ✅ CEK STATUS PEMBAYARAN
       if (total && transactionId) {
         const trx = await checkStatus(orkut.merchant, orkut.key, transactionId);
         if (trx?.status === 'inactive') {
