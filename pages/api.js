@@ -7,6 +7,7 @@ export default async function handler(req, res) {
     try {
       const { amount, logoUrl, total, transactionId, action } = req.body
 
+      // ✅ CEK STATUS QRIS
       if (total && transactionId) {
         const trx = await checkStatus(orkut.merchant, orkut.key, transactionId)
         if (trx?.status === 'inactive') {
@@ -16,11 +17,13 @@ export default async function handler(req, res) {
         return res.json({ paid, info: trx || null })
       }
 
+      // ✅ BATALKAN QRIS
       if (action === 'cancel' && transactionId) {
         await deactivateQRIS(transactionId)
         return res.json({ success: true, message: 'QRIS dinonaktifkan' })
       }
 
+      // ✅ BUAT QRIS BARU
       if (amount) {
         const requestAmount = parseInt(amount)
         const { min, max } = orkut.adminFeeRange
@@ -28,14 +31,13 @@ export default async function handler(req, res) {
         const finalTotal = requestAmount + fee
         const qris = await createQRIS(finalTotal, orkut.codeqr, logoUrl)
 
-        res.json({
+        return res.json({
           qrImageUrl: qris.qrImageUrl,
           nominal: requestAmount,
           fee,
           total: finalTotal,
           transactionId: qris.transactionId
         })
-        return
       }
 
       res.status(400).json({ error: 'Invalid request' })
@@ -68,7 +70,7 @@ async function pollingWebLain() {
       const { id, nominal } = fields;
       if (!id || !nominal) continue;
 
-      const amount = parseInt(nominal); // ✅ penting agar Next.js tetap pakai field amount
+      const amount = parseInt(nominal);
       const result = await createQRIS(amount, fields.codeqr || '', fields.logo || null);
 
       await airtableRequest('patch', {
