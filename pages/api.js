@@ -60,21 +60,22 @@ async function pollingWebLain() {
   try {
     const filterFormula = `status="pending"`;
     const response = await airtableRequest('get', null, `?filterByFormula=${encodeURIComponent(filterFormula)}`);
-
     const records = response.records || [];
+
     for (const record of records) {
       const recordId = record.id;
       const fields = record.fields;
-
       const { id, nominal } = fields;
       if (!id || !nominal) continue;
 
-      const result = await createQRIS(nominal, fields.codeqr || '', fields.logo || null);
+      const amount = parseInt(nominal); // ✅ penting agar Next.js tetap pakai field amount
+      const result = await createQRIS(amount, fields.codeqr || '', fields.logo || null);
 
       await airtableRequest('patch', {
         idTransaksi: result.transactionId,
         url_qris: result.qrImageUrl,
         expired: result.expirationTime,
+        amount: amount,
         status: 'waiting'
       }, recordId);
 
