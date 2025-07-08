@@ -129,7 +129,6 @@ async function checkStatus(merchant, token, transactionId = null, customId = nul
       const qrisRecord = airtableRecords.records[0].fields
       const qrisRecordId = airtableRecords.records[0].id
 
-      // expired otomatis
       if (new Date(qrisRecord.expiredAt) < new Date()) {
         if (qrisRecord.status !== 'expired') {
           await airtableRequest('patch', { status: 'expired' }, qrisRecordId)
@@ -137,12 +136,10 @@ async function checkStatus(merchant, token, transactionId = null, customId = nul
         return { status: 'inactive' }
       }
 
-      // kalau sudah dibayar
       if (qrisRecord.status === 'paid') {
         return qrisRecord
       }
 
-      // fallback cek OkeConnect
       try {
         const apiUrl = `https://gateway.okeconnect.com/api/mutasi/qris/${merchant}/${token}`
         const response = await axios.get(apiUrl)
@@ -162,14 +159,12 @@ async function checkStatus(merchant, token, transactionId = null, customId = nul
         console.error('Error checking QRIS status from OkeConnect:', err.message)
       }
 
-      // default
       return qrisRecord.status === 'active' ? qrisRecord : { status: 'inactive' }
     } else {
       return { status: 'inactive' }
     }
   }
 
-  // fallback total kalau tidak ada filter
   return { status: 'inactive' }
 }
 
