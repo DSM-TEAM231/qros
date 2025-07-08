@@ -122,50 +122,52 @@ async function checkStatus(merchant, token, transactionId = null, customId = nul
     filterByFormula = `customId='${customId}'`
   }
 
-  if (filterByFormula) {
-    const airtableRecords = await airtableRequest('get', null, `?filterByFormula=${encodeURIComponent(filterByFormula)}`)
+  if (!filterByFormula) return { status: 'inactive' }
 
-    if (airtableRecords.records && airtableRecords.records.length > 0) {
-      const qrisRecord = airtableRecords.records[0].fields
-      const qrisRecordId = airtableRecords.records[0].id
+  const airtableRecords = await airtableRequest('get', null, `?filterByFormula=${encodeURIComponent(filterByFormula)}`)
 
-      if (new Date(qrisRecord.expiredAt) < new Date()) {
-        if (qrisRecord.status !== 'expired') {
-          await airtableRequest('patch', { status: 'expired' }, qrisRecordId)
-        }
-        return { status: 'inactive' }
-      }
-
-      if (qrisRecord.status === 'paid') {
-        return qrisRecord
-      }
-
-      try {
-        const apiUrl = `https://gateway.okeconnect.com/api/mutasi/qris/${merchant}/${token}`
-        const response = await axios.get(apiUrl)
-        const result = response.data
-
-        const found = result.data.find(
-          item =>
-            parseFloat(item.nominal) === qrisRecord.amount &&
-            item.tanggal.includes(new Date().toISOString().substring(0, 10))
-        )
-
-        if (found) {
-          await airtableRequest('patch', { status: 'paid' }, qrisRecordId)
-          return { ...qrisRecord, status: 'paid' }
-        }
-      } catch (err) {
-        console.error('Error checking QRIS status from OkeConnect:', err.message)
-      }
-
-      return qrisRecord.status === 'active' ? qrisRecord : { status: 'inactive' }
-    } else {
-      return { status: 'inactive' }
-    }
+  if (!airtableRecords.records || airtableRecords.records.length === 0) {
+    return { status: 'inactive' }
   }
 
-  return { status: 'inactive' }
+  const record = airtableRecords.records[0]
+  const fields = record.fields
+  const id = record.id
+
+  // expired otomatis
+  if (new Date(fields.expiredAt) < new Date()) {
+    if (fields.status !== 'expired') {
+      await airtableRequest('patch', { status: 'expired' }, id)
+    }
+    return { status: 'inactive' }
+  }
+
+  // jika sudah paid
+  if (fields.status === 'paid') return fields
+
+  // cek OkeConnect
+  try {
+    const apiUrl = `https://gateway.okeconnect.com/api/mutasi/qris/${merchant}/${token}`
+    const response = await axios.get(apiUrl)
+    const result = response.data
+
+    const found = result.data.find(item =>
+      parseFloat(item.nominal) === fields.amount &&
+      item.tanggal.includes(new Date().toISOString().substring(0, 10))
+    )
+
+    if (found) {
+      await airtableRequest('patch', { status: 'paid' }, id)
+      return {
+        ...fields,
+        status: 'paid'
+      }
+    }
+  } catch (err) {
+    console.error('Error checking QRIS from OkeConnect:', err.message)
+  }
+
+  return fields.status === 'active' ? fields : { status: 'inactive' }
 }
 
 async function deactivateQRIS(transactionId = null, customId = null) {
