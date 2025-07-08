@@ -2,6 +2,16 @@ import { createQRIS, checkStatus, deactivateQRIS } from '../system_qris'
 import orkut from '../setting'
 
 export default async function handler(req, res) {
+  // === CORS HEADER (WAJIB untuk akses dari domain lain / localhost) ===
+  res.setHeader('Access-Control-Allow-Origin', '*'); // Untuk produksi, ganti '*' dengan domain frontend kamu
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  // === Handle preflight OPTIONS ===
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   if (req.method === 'POST') {
     try {
       // Ambil semua parameter termasuk customId untuk pihak ketiga
