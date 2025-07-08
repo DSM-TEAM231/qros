@@ -7,14 +7,21 @@ const orkut = {
     max: 150
   },
 
-  // Konfigurasi Airtable
-  airtableApiKey: 'pataL8W8PM5LspIAp.7d42bcd20b24992dee249cad3a2633f5a09449a45a95d21693aee7aca3c17bad',
-  airtableBaseId: 'app9GfTtbsctCVBsi',
-  airtableTable: 'qris',
-  
-  // Timer settings
+  // Waktu UI & masa berlaku QRIS
   qrisUiTimerSeconds: 300,
-  qrisExpiredMinutes: 30
+  qrisExpiredMinutes: 30,
+
+  // Firebase config (gabung HTML & Next.js)
+  firebaseProdukConfig: {
+    apiKey: "AIzaSyDbbbj-78mpFr_Zzs4n2u75gxz6vlX996o",
+    authDomain: "webshop-45b4c.firebaseapp.com",
+    databaseURL: "https://webshop-45b4c-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "webshop-45b4c",
+    storageBucket: "webshop-45b4c.appspot.com",
+    messagingSenderId: "372490284367",
+    appId: "1:372490284367:web:1b44e33ffb6ee1202a293a",
+    measurementId: "G-8BZ9Z6JHF6"
+  }
 }
 
 module.exports = orkut

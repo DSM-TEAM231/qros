@@ -2,47 +2,31 @@ const axios = require('axios')
 const FormData = require('form-data')
 const QRCode = require('qrcode')
 const sharp = require('sharp')
-const { airtableApiKey, airtableBaseId, airtableTable, qrisExpiredMinutes } = require('./setting')
+const { firebaseProdukConfig, qrisExpiredMinutes } = require('./setting')
+const { initializeApp } = require('firebase/app')
+const {
+  getDatabase,
+  ref,
+  get,
+  set,
+  update,
+  child
+} = require('firebase/database')
 
-const airtableApiBaseUrl = `https://api.airtable.com/v0/${airtableBaseId}/${airtableTable}`
+// Inisialisasi Firebase
+const firebaseApp = initializeApp(firebaseProdukConfig)
+const db = getDatabase(firebaseApp)
 
-async function airtableRequest(method, data = null, recordIdOrQuery = null) {
-  let url = airtableApiBaseUrl
-  if (recordIdOrQuery) {
-    url += recordIdOrQuery.startsWith('?') ? recordIdOrQuery : `/${recordIdOrQuery}`
-  }
-
-  const config = {
-    method,
-    url,
-    headers: {
-      Authorization: `Bearer ${airtableApiKey}`,
-      'Content-Type': 'application/json'
-    }
-  }
-
-  if (data) {
-    config.data = JSON.stringify({ fields: data })
-  }
-
-  try {
-    const response = await axios(config)
-    return response.data
-  } catch (error) {
-    console.error(`Error with Airtable ${method} request to ${url}:`, error.response?.data || error.message)
-    throw new Error(`Airtable API error: ${error.response?.data?.error?.message || error.message}`)
-  }
-}
-
+// === UTILITAS ===
 function convertCRC16(str) {
-  let crc = 0xffff
+  let crc = 0xFFFF
   for (let c = 0; c < str.length; c++) {
     crc ^= str.charCodeAt(c) << 8
     for (let i = 0; i < 8; i++) {
       crc = crc & 0x8000 ? (crc << 1) ^ 0x1021 : crc << 1
     }
   }
-  return ('000' + (crc & 0xffff).toString(16).toUpperCase()).slice(-4)
+  return ("000" + (crc & 0xFFFF).toString(16).toUpperCase()).slice(-4)
 }
 
 function generateTransactionId() {
@@ -64,129 +48,87 @@ async function overlayLogo(qrBuffer, urlLogo) {
     const qrWithLogo = await sharp(qrBuffer).composite([{ input: resizedLogo, gravity: 'center' }]).toBuffer()
     return qrWithLogo
   } catch (err) {
-    console.warn('Gagal overlay logo di QR:', err.message)
+    console.warn("Gagal overlay logo di QR:", err.message)
     return qrBuffer
   }
 }
 
+// === FUNGSI UTAMA ===
 async function createQRIS(amount, codeqr, logoUrl = null, customId = null) {
-  let qrisData = codeqr.slice(0, -4)
-  const step1 = qrisData.replace('010211', '010212')
-  const step2 = step1.split('5802ID')
-  amount = amount.toString()
-  const uang = '54' + ('0' + amount.length).slice(-2) + amount + '5802ID'
-  const result = step2[0] + uang + step2[1] + convertCRC16(step2[0] + uang + step2[1])
+  const baseQR = codeqr.slice(0, -4)
+  const modifiedQR = baseQR.replace("010211", "010212")
+  const [head, tail] = modifiedQR.split("5802ID")
+  const amountStr = amount.toString()
+  const uang = "54" + ("0" + amountStr.length).slice(-2) + amountStr + "5802ID"
+  const fullQR = head + uang + tail + convertCRC16(head + uang + tail)
 
-  const qrCodeBuffer = await QRCode.toBuffer(result, {
+  const qrCodeBuffer = await QRCode.toBuffer(fullQR, {
     color: { dark: '#1864ab', light: '#e7f5ff' },
     width: 500,
     margin: 2
   })
 
   const finalBuffer = await overlayLogo(qrCodeBuffer, logoUrl)
+
   const form = new FormData()
   form.append('file', finalBuffer, { filename: 'qr.png', contentType: 'image/png' })
-
-  const response = await axios.post('https://cdn.itzky.xyz/', form, {
-    headers: form.getHeaders()
-  })
+  const upload = await axios.post('https://cdn.itzky.xyz/', form, { headers: form.getHeaders() })
 
   const transactionId = generateTransactionId()
-  const expirationTime = generateExpirationTime()
+  const expiredAt = generateExpirationTime()
 
-  const qrisRecordData = {
+  const qrisData = {
     transactionId,
     amount: parseFloat(amount),
-    qrImageUrl: response.data.fileUrl,
+    qrImageUrl: upload.data.fileUrl,
     status: 'active',
-    expiredAt: expirationTime
+    expiredAt
   }
-  if (customId) qrisRecordData.customId = customId
 
-  await airtableRequest('post', qrisRecordData)
-
-  return {
-    transactionId,
-    amount,
-    expirationTime,
-    qrImageUrl: response.data.fileUrl,
-    customId: customId || undefined
+  if (customId) {
+    await set(ref(db, `qris_request/${customId}`), qrisData)
+  } else {
+    await set(ref(db, `qris/${transactionId}`), qrisData)
   }
+
+  return qrisData
 }
 
-async function checkStatus(merchant, token, transactionId = null, customId = null) {
-  let filterByFormula = null
+async function checkStatus(merchant, token, transactionId = null) {
   if (transactionId) {
-    filterByFormula = `transactionId='${transactionId}'`
-  } else if (customId) {
-    filterByFormula = `customId='${customId}'`
-  }
+    const snap = await get(child(ref(db), `qris/${transactionId}`))
+    const record = snap.val()
+    if (!record) return { status: 'inactive' }
 
-  if (!filterByFormula) return { status: 'inactive' }
-
-  const airtableRecords = await airtableRequest('get', null, `?filterByFormula=${encodeURIComponent(filterByFormula)}`)
-
-  if (!airtableRecords.records || airtableRecords.records.length === 0) {
-    return { status: 'inactive' }
-  }
-
-  const record = airtableRecords.records[0]
-  const fields = record.fields
-  const id = record.id
-
-  // expired otomatis
-  if (new Date(fields.expiredAt) < new Date()) {
-    if (fields.status !== 'expired') {
-      await airtableRequest('patch', { status: 'expired' }, id)
+    const expired = new Date(record.expiredAt) < new Date()
+    if (expired && record.status !== 'expired') {
+      await update(ref(db, `qris/${transactionId}`), {
+        status: 'expired',
+        expiredAt: new Date(Date.now() - 60000).toISOString()
+      })
+      return { status: 'inactive' }
     }
-    return { status: 'inactive' }
+
+    if (record.status !== 'active') return { status: 'inactive' }
   }
 
-  // jika sudah paid
-  if (fields.status === 'paid') return fields
-
-  // cek OkeConnect
   try {
-    const apiUrl = `https://gateway.okeconnect.com/api/mutasi/qris/${merchant}/${token}`
-    const response = await axios.get(apiUrl)
-    const result = response.data
-
-    const found = result.data.find(item =>
-      parseFloat(item.nominal) === fields.amount &&
-      item.tanggal.includes(new Date().toISOString().substring(0, 10))
-    )
-
-    if (found) {
-      await airtableRequest('patch', { status: 'paid' }, id)
-      return {
-        ...fields,
-        status: 'paid'
-      }
-    }
+    const url = `https://gateway.okeconnect.com/api/mutasi/qris/${merchant}/${token}`
+    const res = await axios.get(url)
+    return res.data.data[0]
   } catch (err) {
-    console.error('Error checking QRIS from OkeConnect:', err.message)
+    console.error('Error cek status QRIS dari OkeConnect:', err.message)
+    return null
   }
-
-  return fields.status === 'active' ? fields : { status: 'inactive' }
 }
 
-async function deactivateQRIS(transactionId = null, customId = null) {
-  let filterByFormula = null
-  if (transactionId) {
-    filterByFormula = `transactionId='${transactionId}'`
-  } else if (customId) {
-    filterByFormula = `customId='${customId}'`
-  }
-  if (!filterByFormula) return
-
-  const airtableRecords = await airtableRequest('get', null, `?filterByFormula=${encodeURIComponent(filterByFormula)}`)
-
-  if (airtableRecords.records && airtableRecords.records.length > 0) {
-    const qrisRecordId = airtableRecords.records[0].id
-    await airtableRequest('patch', {
+async function deactivateQRIS(transactionId) {
+  const snap = await get(child(ref(db), `qris/${transactionId}`))
+  if (snap.exists()) {
+    await update(ref(db, `qris/${transactionId}`), {
       status: 'expired',
       expiredAt: new Date(Date.now() - 60000).toISOString()
-    }, qrisRecordId)
+    })
   }
 }
 
