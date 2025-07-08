@@ -6,10 +6,11 @@ const { airtableApiKey, airtableBaseId, airtableTable, qrisExpiredMinutes } = re
 
 const airtableApiBaseUrl = `https://api.airtable.com/v0/${airtableBaseId}/${airtableTable}`
 
-async function airtableRequest(method, data = null, recordId = null) {
+// Mendukung query string atau recordId
+async function airtableRequest(method, data = null, recordIdOrQuery = null) {
   let url = airtableApiBaseUrl;
-  if (recordId) {
-    url += `/${recordId}`;
+  if (recordIdOrQuery) {
+    url += recordIdOrQuery.startsWith('?') ? recordIdOrQuery : `/${recordIdOrQuery}`;
   }
 
   const config = {
@@ -72,7 +73,8 @@ async function overlayLogo(qrBuffer, urlLogo) {
   }
 }
 
-async function createQRIS(amount, codeqr, logoUrl = null) {
+// MODIFIKASI: tambah customId (untuk pihak ketiga)
+async function createQRIS(amount, codeqr, logoUrl = null, customId = null) {
   let qrisData = codeqr.slice(0, -4)
   const step1 = qrisData.replace("010211", "010212")
   const step2 = step1.split("5802ID")
@@ -107,6 +109,7 @@ async function createQRIS(amount, codeqr, logoUrl = null) {
     status: 'active',
     expiredAt: expirationTime
   }
+  if (customId) qrisRecordData.customId = customId;
 
   await airtableRequest('post', qrisRecordData);
 
@@ -114,13 +117,21 @@ async function createQRIS(amount, codeqr, logoUrl = null) {
     transactionId: transactionId,
     amount: amount,
     expirationTime: expirationTime,
-    qrImageUrl: response.data.fileUrl
+    qrImageUrl: response.data.fileUrl,
+    customId: customId || undefined
   }
 }
 
-async function checkStatus(merchant, token, transactionId = null) {
+// MODIFIKASI: cek status bisa pakai transactionId ATAU customId
+async function checkStatus(merchant, token, transactionId = null, customId = null) {
+  let filterByFormula = null;
   if (transactionId) {
-    const filterByFormula = `transactionId='${transactionId}'`;
+    filterByFormula = `transactionId='${transactionId}'`;
+  } else if (customId) {
+    filterByFormula = `customId='${customId}'`;
+  }
+
+  if (filterByFormula) {
     const airtableRecords = await airtableRequest('get', null, `?filterByFormula=${encodeURIComponent(filterByFormula)}`);
 
     if (airtableRecords.records && airtableRecords.records.length > 0) {
@@ -137,11 +148,13 @@ async function checkStatus(merchant, token, transactionId = null) {
       if (qrisRecord.status !== 'active') {
         return { status: 'inactive' };
       }
+      return qrisRecord;
     } else {
       return { status: 'inactive' };
     }
   }
 
+  // fallback: cek ke OkeConnect jika tidak ada di Airtable
   try {
     const apiUrl = `https://gateway.okeconnect.com/api/mutasi/qris/${merchant}/${token}`
     const response = await axios.get(apiUrl)
@@ -153,9 +166,16 @@ async function checkStatus(merchant, token, transactionId = null) {
   }
 }
 
-// MODIFIKASI: expiredAt langsung di-set ke waktu lampau saat dibatalkan
-async function deactivateQRIS(transactionId) {
-  const filterByFormula = `transactionId='${transactionId}'`;
+// MODIFIKASI: bisa expired pakai transactionId atau customId
+async function deactivateQRIS(transactionId = null, customId = null) {
+  let filterByFormula = null;
+  if (transactionId) {
+    filterByFormula = `transactionId='${transactionId}'`;
+  } else if (customId) {
+    filterByFormula = `customId='${customId}'`;
+  }
+  if (!filterByFormula) return;
+
   const airtableRecords = await airtableRequest('get', null, `?filterByFormula=${encodeURIComponent(filterByFormula)}`);
 
   if (airtableRecords.records && airtableRecords.records.length > 0) {
