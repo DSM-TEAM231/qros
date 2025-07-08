@@ -1,78 +1,81 @@
 import { createQRIS, checkStatus, deactivateQRIS } from '../system_qris'
 import orkut from '../setting'
+import { initializeApp } from 'firebase/app'
+import { getDatabase, ref, get } from 'firebase/database'
+
+// Init Firebase client
+const firebaseApp = initializeApp(orkut.firebaseProdukConfig)
+const db = getDatabase(firebaseApp)
 
 export default async function handler(req, res) {
-  // === CORS HEADER (WAJIB untuk akses dari domain lain / localhost) ===
-  res.setHeader('Access-Control-Allow-Origin', '*') // Untuk produksi, ganti '*' ke domain frontend kamu
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+  if (req.method !== 'POST') return res.status(405).end()
 
-  // === Handle preflight OPTIONS ===
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end()
-  }
+  try {
+    const { amount, logoUrl, total, transactionId, action, customId } = req.body
 
-  if (req.method === 'POST') {
-    try {
-      // Ambil semua parameter dari body
-      const { amount, logoUrl, total, transactionId, action, customId } = req.body
-
-      // === 1. CEK STATUS TRANSAKSI (Polling dari HTML frontend) ===
-      if (total && (transactionId || customId)) {
-        const trx = await checkStatus(orkut.merchant, orkut.key, transactionId, customId)
-
-        // Jika tidak ditemukan atau sudah expired
-        if (!trx || trx.status === 'inactive' || trx.status === 'expired') {
-          return res.json({ paid: false, info: null, inactive: true })
-        }
-
-        // Pastikan nominalnya cocok
-        const paid = trx.status === 'paid' && parseInt(trx.amount) === parseInt(total)
-
-        return res.json({
-          paid,
-          info: {
-            transactionId: trx.transactionId || null,
-            customId: trx.customId || null,
-            qrImageUrl: trx.qrImageUrl || null,
-            expiredAt: trx.expiredAt || null,
-            amount: trx.amount || null,
-            status: trx.status || null
-          },
-          inactive: false
-        })
+    // ✅ 1. Cek status transaksi dari internal UI
+    if (total && transactionId) {
+      const trx = await checkStatus(orkut.merchant, orkut.key, transactionId)
+      if (trx?.status === 'inactive') {
+        return res.json({ paid: false, info: null, inactive: true })
       }
-
-      // === 2. CANCEL QRIS (bisa pakai transactionId atau customId) ===
-      if (action === 'cancel' && (transactionId || customId)) {
-        await deactivateQRIS(transactionId, customId)
-        return res.json({ success: true, message: 'QRIS dinonaktifkan' })
-      }
-
-      // === 3. BUAT QRIS BARU (dari pihak ketiga atau UI langsung) ===
-      if (amount) {
-        const requestAmount = parseInt(amount)
-        const { min, max } = orkut.adminFeeRange
-        const fee = Math.floor(Math.random() * (max - min + 1)) + min
-        const finalTotal = requestAmount + fee
-
-        const qris = await createQRIS(finalTotal, orkut.codeqr, logoUrl, customId)
-
-        return res.json({
-          qrImageUrl: qris.qrImageUrl,
-          nominal: requestAmount,
-          fee,
-          total: finalTotal,
-          transactionId: qris.transactionId,
-          customId: qris.customId || undefined
-        })
-      }
-
-      return res.status(400).json({ error: 'Invalid request parameters' })
-    } catch (err) {
-      return res.status(500).json({ error: err.message || 'Internal server error' })
+      const paid = trx && parseInt(trx.amount) === parseInt(total)
+      return res.json({ paid, info: trx || null })
     }
-  }
 
-  return res.status(405).end() // Method Not Allowed
+    // ✅ 2. Batalkan QRIS
+    if (action === 'cancel' && transactionId) {
+      await deactivateQRIS(transactionId)
+      return res.json({ success: true, message: 'QRIS dinonaktifkan' })
+    }
+
+    // ✅ 3. Buat QRIS: untuk internal UI atau pihak ketiga via customId
+    if (amount) {
+      const requestAmount = parseInt(amount)
+      const { min, max } = orkut.adminFeeRange
+      const fee = Math.floor(Math.random() * (max - min + 1)) + min
+      const finalTotal = requestAmount + fee
+
+      const qris = await createQRIS(finalTotal, orkut.codeqr, logoUrl || null, customId || null)
+
+      const response = {
+        qrImageUrl: qris.qrImageUrl,
+        nominal: requestAmount,
+        fee,
+        total: finalTotal,
+        transactionId: qris.transactionId,
+        expiredAt: qris.expiredAt
+      }
+
+      // ⛔ customId gak dikembalikan di response
+      return res.json(response)
+    }
+
+    // ✅ 4. Buat QRIS dari Firebase pihak ketiga
+    if (req.body.listenRequest === true) {
+      const snap = await get(ref(db, `qris_request/${req.body.customId}`))
+      const data = snap.val()
+      if (!data || !data.amount) return res.status(404).json({ error: 'Permintaan tidak ditemukan' })
+
+      const { min, max } = orkut.adminFeeRange
+      const fee = Math.floor(Math.random() * (max - min + 1)) + min
+      const finalTotal = parseInt(data.amount) + fee
+
+      const qris = await createQRIS(finalTotal, orkut.codeqr, null, req.body.customId)
+
+      return res.json({
+        transactionId: qris.transactionId,
+        qrImageUrl: qris.qrImageUrl,
+        total: finalTotal,
+        nominal: data.amount,
+        fee,
+        expiredAt: qris.expiredAt
+      })
+    }
+
+    return res.status(400).json({ error: 'Permintaan tidak valid' })
+  } catch (err) {
+    console.error('❌ ERROR API:', err.message)
+    return res.status(500).json({ error: err.message })
+  }
 }
